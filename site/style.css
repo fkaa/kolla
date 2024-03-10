@@ -1,0 +1,25 @@
+html, body {
+	padding: 0;
+	margin: 0;
+	width: 100%;
+	height: 100%;
+}
+
+.home-page {
+	width: 100%;
+	height: 100%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.join-form {
+	display: flex;
+	flex-direction: column;
+}
+
+.form-element {
+	margin: 0.5em;
+}
+
+/* vi: set sw=4 ts=4: */
