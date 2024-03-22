@@ -1,15 +1,167 @@
-use std::path::{Component, Path, PathBuf};
-use std::{env, fs, thread};
+use std::collections::HashMap;
+use std::sync::Arc;
 
-use log::{debug, info, warn};
-use serde::{Deserialize, Serialize};
-use tiny_http::{Request, Response, ResponseBox};
-use tungstenite::protocol::{Role, WebSocket};
+use axum::body::Body;
+use axum::extract::ws::{Message, WebSocket};
+use axum::extract::{Path, State, WebSocketUpgrade};
+use axum::http::{Request, Response, StatusCode, Uri};
+use axum::response::IntoResponse;
+use axum::routing::get;
+use axum::Router;
+use futures_util::stream::StreamExt;
+use futures_util::SinkExt;
+use log::{debug, info};
+use tokio::sync::mpsc::Receiver;
+use tokio::sync::RwLock;
+use tower_http::services::ServeDir;
 
-fn main() {
+use crate::room::{room_thread, FromBrowser, Room, ToBrowser};
+
+mod room;
+
+#[derive(Clone, Default)]
+struct AppState {
+    rooms: Arc<RwLock<HashMap<String, Arc<Room>>>>,
+}
+
+impl AppState {
+    async fn find_room(&self, name: &str) -> Option<Arc<Room>> {
+        self.rooms.read().await.get(name).cloned()
+    }
+
+    async fn add_room(&self, room: Arc<Room>) {
+        let mut rooms = self.rooms.write().await;
+
+        rooms.insert(room.name.clone(), room);
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    env_logger::init();
+    info!("Kolla kolla!");
+
+    let state = AppState::default();
+    let (room, room_receiver) = Room::new(
+        "ASDF".into(),
+        "http://0.0.0.0:8000/WING%20IT%21%20-%20Blender%20Open%20Movie-1080p.mp4".into(),
+    );
+    let room = Arc::new(room);
+    state.add_room(room.clone()).await;
+    tokio::spawn(async move { room_thread(room.clone(), room_receiver).await });
+
+    let app = Router::new()
+        .route("/api/:room/:name/", get(room_websocket_handler))
+        .fallback(get_asset)
+        .with_state(state);
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8003").await.unwrap();
+
+    info!("Listning on {}", listener.local_addr().unwrap());
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn default_index_html_response() -> Response<Body> {
+    let content = tokio::fs::read("site/index.html").await.unwrap();
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "text/html")
+        .body(Body::from(content))
+        .unwrap()
+}
+
+#[axum::debug_handler]
+async fn room_websocket_handler(
+    Path((room, name)): Path<(String, String)>,
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+) -> axum::response::Response<Body> {
+    debug!("Got WS request for {room:?} with name {name:?}");
+
+    let Some(room) = state.find_room(&room).await else {
+        return axum::response::Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::empty())
+            .unwrap();
+    };
+
+    let recv = room.add_watcher(name.clone()).await;
+
+    ws.on_upgrade(move |socket| room_websocket(socket, recv, room, name))
+}
+
+async fn room_websocket(
+    socket: WebSocket,
+    mut room_recv: Receiver<ToBrowser>,
+    room: Arc<Room>,
+    name: String,
+) {
+    let (mut write, mut read) = socket.split();
+
+    tokio::select! {
+        Some(msg) = read.next() => {
+            debug!("{}/{}: from browser: {:?}", room.name, name, msg);
+
+            let msg = if let Ok(msg) = msg {
+                msg
+            } else {
+                // client disconnected
+                return;
+            };
+
+            let msg = parse_msg(msg).unwrap();
+
+            room.send(msg).await;
+        }
+        Some(msg) = room_recv.recv() => {
+            debug!("{}/{}: to browser: {:?}", room.name, name, msg);
+
+            write.send(Message::Text(serde_json::to_string(&msg).unwrap())).await.unwrap();
+        }
+    }
+}
+
+fn parse_msg(msg: Message) -> anyhow::Result<FromBrowser> {
+    match msg {
+        Message::Text(t) => Ok(serde_json::from_str(&t)?),
+        _ => anyhow::bail!("invalid message type"),
+    }
+}
+
+async fn get_asset(uri: Uri) -> Result<Response<Body>, (StatusCode, String)> {
+    debug!("Fallback for request {uri:?}");
+
+    if uri.path().starts_with("/api") {
+        return Err((StatusCode::NOT_FOUND, "Not Found".to_string()));
+    }
+
+    if uri.path() == "/" {
+        return Ok(default_index_html_response().await.into_response());
+    }
+
+    let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+    match ServeDir::new("site").try_call(req).await {
+        Ok(res) => {
+            if res.status() != StatusCode::OK {
+                Ok(default_index_html_response().await.into_response())
+            } else {
+                Ok(res.into_response())
+            }
+        }
+        Err(_err) => Ok(default_index_html_response().await.into_response()),
+    }
+}
+
+/*fn main2() {
     env_logger::init();
 
     info!("Kolla kolla!");
+
+    let mut state = Arc::new(State::default());
+    state.add_room(Room::new(
+        "test-room".into(),
+        "http://0.0.0.0:8000/WING%20IT%21%20-%20Blender%20Open%20Movie-1080p.mp4".into(),
+    ));
 
     let server = tiny_http::Server::http("127.0.0.1:8003").unwrap();
 
@@ -21,7 +173,7 @@ fn main() {
 
             debug!("Got {method} {url}");
 
-            if let Err(e) = process(req) {
+            if let Err(e) = process(req, state.clone()) {
                 warn!("Error processing {method} {url}: {e}");
             }
         });
@@ -44,14 +196,17 @@ fn convert_key(input: &str) -> String {
     STANDARD.encode(sha1.finalize())
 }
 
-fn process(req: Request) -> anyhow::Result<()> {
+fn process(req: Request, state: Arc<State>) -> anyhow::Result<()> {
     let url = req.url();
 
     // room websocket
     if url.starts_with("/api/room/") {
         let room = &url[10..];
 
-        dbg!(room);
+        let Some(room) = state.find_room(room) else {
+            req.respond(Response::from_string("").with_status_code(404))?;
+            return Ok(());
+        };
 
         let key = match req
             .headers()
@@ -83,9 +238,7 @@ fn process(req: Request) -> anyhow::Result<()> {
         let stream = req.upgrade("websocket", response);
 
         let mut websocket = WebSocket::from_raw_socket(stream, Role::Server, None);
-        while let Ok(msg) = websocket.read() {
-            dbg!(msg);
-        }
+        room::process_room(websocket, room)?;
 
         return Ok(());
     }
@@ -119,4 +272,4 @@ fn process(req: Request) -> anyhow::Result<()> {
     req.respond(Response::from_data(content).with_status_code(200))?;
 
     return Ok(());
-}
+}*/
