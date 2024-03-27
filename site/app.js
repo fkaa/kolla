@@ -20,21 +20,30 @@ function setEnabled(element, enabled) {
 	}
 }
 
-function isValidHomePage(name, room) {
-	return name.value.length > 0 && room.value.length > 0;
+function isValidHomePage(name) {
+	return name.value.length > 0;
 }
 
 function onWebSocketMessage(e) {
 	let data = JSON.parse(e.data);
 
 	console.log(data);
+
+	if (data.metadata != null) {
+		loadVideoPage(data.metadata.url);
+	}
 }
 
-async function loadHomePage() {
-	let [html, name, room, join] = loadTemplate("homePage", "name", "room", "join");
+function loadHomePage() {
+	let [html] = loadTemplate("homePage");
 
-	name.oninput = () => setEnabled(join, isValidHomePage(name, room));
-	room.oninput = () => setEnabled(join, isValidHomePage(name, room));
+	document.body.appendChild(html);
+}
+
+function loadJoinPage(roomName) {
+	let [html, name, join] = loadTemplate("homePage", "name", "join");
+
+	name.oninput = () => setEnabled(join, isValidHomePage(name));
 
 	join.onclick = () => {
 		ws = new WebSocket(`ws://localhost:8003/api/${room.value}/${name.value}/`);
@@ -46,7 +55,7 @@ async function loadHomePage() {
 	document.body.appendChild(html);
 }
 
-async function loadVideoPage(url) {
+function loadVideoPage(url) {
 	let [html, player] = loadTemplate("videoPage", "player");
 
 	player.src = url;
@@ -55,33 +64,27 @@ async function loadVideoPage(url) {
 	document.body.appendChild(html);
 }
 
-const handleLocation = async () => {
-	const path = window.location.pathname;
-
-	document.body.innerHTML = "";
-
-	console.log(path);
-
-	switch (path) {
+const handleFragment = () => {
+	switch (location.hash) {
 		case "":
-		case "/":
-			await loadHomePage();
+		case "#":
+			console.log("Loading home page");
+			loadHomePage();
 			break;
-		default:
-			if (path.startsWith("/watch/")) {
-				await loadVideoPage();
-				break;
-			}
 
-			console.log("oops!");
+		default:
+			console.log("Loading video page: " + location.hash);
+			loadJoinPage(location.hash.substring(1));
 			break;
 	}
 };
 
-window.onpopstate = handleLocation;
-
-window.onload = () => {
-	handleLocation();
+window.onload = async function (e) {
+	handleFragment();
+};
+window.onhashchange = async function (e) {
+	console.log(`new location: ${e.newURL}`);
+	handleFragment();
 };
 
 /* vi: set sw=4 ts=4: */
