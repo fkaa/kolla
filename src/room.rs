@@ -1,20 +1,22 @@
-use std::sync::{Arc};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::{Duration, Instant};
 use log::debug;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-
 use tokio::sync::RwLock;
 
+const EMOJIS: Lazy<Vec<&'static emojis::Emoji>> = Lazy::new(|| emojis::iter().collect());
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all="camelCase")]
+#[serde(rename_all = "camelCase")]
 pub struct WatcherInfo {
     id: u32,
     name: String,
     buffered: f64,
     position: f64,
+    state: RoomState,
 }
 
 impl From<&Watcher> for WatcherInfo {
@@ -24,19 +26,20 @@ impl From<&Watcher> for WatcherInfo {
             name: value.name.clone(),
             buffered: value.buffered,
             position: value.position,
+            state: value.state,
         }
     }
 }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
-#[serde(rename_all="camelCase")]
+#[serde(rename_all = "camelCase")]
 pub enum RoomState {
     Playing,
     Paused,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all="camelCase")]
+#[serde(rename_all = "camelCase")]
 pub struct RoomInfo {
     name: String,
     url: String,
@@ -46,41 +49,48 @@ pub struct RoomInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all="camelCase")]
+#[serde(rename_all = "camelCase")]
 pub enum ToBrowser {
+    Id(u32),
     Metadata(RoomInfo),
-    Play {
-        id: u32,
-        request_id: u32,
-        time: f64,
-    },
-    Pause {
-        id: u32,
-        request_id: u32,
-        time: f64,
-    },
+    Play { id: u32, request_id: u32, time: f64 },
+    Pause { id: u32, request_id: u32, time: f64 },
+    Seek { id: u32, request_id: u32, time: f64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all="camelCase")]
+#[serde(rename_all = "camelCase")]
 pub enum FromBrowser {
-    Join { name: String },
-    Play {
+    Join {
+        name: String,
+    },
+    Leave {
         id: u32,
+    },
+    #[serde(rename_all = "camelCase")]
+    Play {
+        id: Option<u32>,
         request_id: u32,
         time: f64,
     },
+    #[serde(rename_all = "camelCase")]
     Pause {
-        id: u32,
+        id: Option<u32>,
+        request_id: u32,
+        time: f64,
+    },
+    #[serde(rename_all = "camelCase")]
+    Seek {
+        id: Option<u32>,
         request_id: u32,
         time: f64,
     },
     Status {
-        id: u32,
+        id: Option<u32>,
         position: f64,
         buffered: f64,
         state: RoomState,
-    }
+    },
 }
 
 pub struct Watcher {
@@ -145,14 +155,64 @@ pub async fn room_thread(room: Arc<Room>, mut recv: Receiver<FromBrowser>) {
 
                     broadcast(&room, ToBrowser::Metadata(room_info)).await;
                 }
-                FromBrowser::Play { id, request_id, time } => {
-                    broadcast(&room, ToBrowser::Play {id, request_id, time}).await;
+                FromBrowser::Leave { .. } => {
+                    let room_info = room.get_info().await;
+
+                    broadcast(&room, ToBrowser::Metadata(room_info)).await;
                 }
-                FromBrowser::Pause { id, request_id, time } => {
-                    broadcast(&room, ToBrowser::Pause {id, request_id, time}).await;
+                FromBrowser::Play {
+                    id,
+                    request_id,
+                    time,
+                } => {
+                    broadcast(
+                        &room,
+                        ToBrowser::Play {
+                            id: id.unwrap(),
+                            request_id,
+                            time,
+                        },
+                    )
+                    .await;
                 }
-                FromBrowser::Status { id, position, buffered, state } => {
-                    room.update_status(id, position, buffered, state).await;
+                FromBrowser::Pause {
+                    id,
+                    request_id,
+                    time,
+                } => {
+                    broadcast(
+                        &room,
+                        ToBrowser::Pause {
+                            id: id.unwrap(),
+                            request_id,
+                            time,
+                        },
+                    )
+                    .await;
+                }
+                FromBrowser::Seek {
+                    id,
+                    request_id,
+                    time,
+                } => {
+                    broadcast(
+                        &room,
+                        ToBrowser::Seek {
+                            id: id.unwrap(),
+                            request_id,
+                            time,
+                        },
+                    )
+                    .await;
+                }
+                FromBrowser::Status {
+                    id,
+                    position,
+                    buffered,
+                    state,
+                } => {
+                    room.update_status(id.unwrap(), position, buffered, state)
+                        .await;
 
                     let room_info = room.get_info().await;
                     broadcast(&room, ToBrowser::Metadata(room_info)).await;
@@ -179,8 +239,14 @@ impl Room {
         (room, recv)
     }
 
-    pub async fn add_watcher(&self, name: String) -> Receiver<ToBrowser> {
+    pub async fn add_watcher(&self, name: String) -> (Receiver<ToBrowser>, u32) {
+        use rand::prelude::*;
+
         let mut watchers = self.watchers.write().await;
+
+        let emojis = EMOJIS;
+        let emoji = emojis.choose(&mut rand::thread_rng()).unwrap();
+        let name = format!("{} {}", emoji, name);
 
         let id = self.id.fetch_add(1, Ordering::SeqCst);
         let (watcher, browser_receiver) = Watcher::new(name.clone(), id);
@@ -188,7 +254,17 @@ impl Room {
 
         self.send.send(FromBrowser::Join { name }).await.unwrap();
 
-        browser_receiver
+        (browser_receiver, id)
+    }
+
+    pub async fn remove_watcher(&self, id: u32) {
+        let mut watchers = self.watchers.write().await;
+
+        if let Some(idx) = watchers.iter().position(|w| w.id == id) {
+            watchers.remove(idx as _);
+
+            self.send.send(FromBrowser::Leave { id }).await.unwrap();
+        }
     }
 
     pub async fn update_status(&self, id: u32, position: f64, buffered: f64, state: RoomState) {

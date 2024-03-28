@@ -10,7 +10,7 @@ use axum::routing::get;
 use axum::Router;
 use futures_util::stream::StreamExt;
 use futures_util::SinkExt;
-use log::{debug, info};
+use log::{debug, info, warn};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
@@ -42,10 +42,7 @@ async fn main() {
     info!("Kolla kolla!");
 
     let state = AppState::default();
-    let (room, room_receiver) = Room::new(
-        "ASDF".into(),
-        "http://0.0.0.0:8000/WING%20IT%21%20-%20Blender%20Open%20Movie-1080p.mp4".into(),
-    );
+    let (room, room_receiver) = Room::new("ASDF".into(), "http://0.0.0.0:8000/wingit.mp4".into());
     let room = Arc::new(room);
     state.add_room(room.clone()).await;
     tokio::spawn(async move { room_thread(room.clone(), room_receiver).await });
@@ -85,9 +82,16 @@ async fn room_websocket_handler(
             .unwrap();
     };
 
-    let recv = room.add_watcher(name.clone()).await;
+    let (recv, id) = room.add_watcher(name.clone()).await;
 
-    ws.on_upgrade(move |socket| room_websocket(socket, recv, room, name))
+    ws.on_upgrade(move |socket| async move {
+        if let Err(e) = room_websocket(socket, recv, room.clone(), name.clone(), id).await {
+            warn!("{e}");
+        }
+
+        debug!("Removing watcher {name} ({id})");
+        room.remove_watcher(id).await;
+    })
 }
 
 async fn room_websocket(
@@ -95,35 +99,84 @@ async fn room_websocket(
     mut room_recv: Receiver<ToBrowser>,
     room: Arc<Room>,
     name: String,
-) {
+    id: u32,
+) -> anyhow::Result<()> {
     let (mut write, mut read) = socket.split();
+    write
+        .send(Message::Text(
+            serde_json::to_string(&ToBrowser::Id(id)).unwrap(),
+        ))
+        .await?;
 
-    tokio::select! {
-        Some(msg) = read.next() => {
-            debug!("{}/{}: from browser: {:?}", room.name, name, msg);
+    loop {
+        tokio::select! {
+            Some(msg) = read.next() => {
+                debug!("{}/{}: from browser: {:?}", room.name, name, msg);
 
-            let msg = if let Ok(msg) = msg {
-                msg
-            } else {
-                // client disconnected
-                return;
-            };
+                let msg = if let Ok(msg) = msg {
+                    msg
+                } else {
+                    // client disconnected
+                    break;
+                };
 
-            let msg = parse_msg(msg).unwrap();
+                let msg = parse_msg(msg, id)?;
 
-            room.send(msg).await;
-        }
-        Some(msg) = room_recv.recv() => {
-            debug!("{}/{}: to browser: {:?}", room.name, name, msg);
+                room.send(msg).await;
+            }
+            Some(msg) = room_recv.recv() => {
+                debug!("{}/{}: to browser: {:?}", room.name, name, msg);
 
-            write.send(Message::Text(serde_json::to_string(&msg).unwrap())).await.unwrap();
+                write.send(Message::Text(serde_json::to_string(&msg).unwrap())).await?;
+                write.flush().await?;
+            }
         }
     }
+
+    Ok(())
 }
 
-fn parse_msg(msg: Message) -> anyhow::Result<FromBrowser> {
+fn parse_msg(msg: Message, id: u32) -> anyhow::Result<FromBrowser> {
     match msg {
-        Message::Text(t) => Ok(serde_json::from_str(&t)?),
+        Message::Text(t) => {
+            let msg = serde_json::from_str(&t)?;
+            let msg = match msg {
+                FromBrowser::Play {
+                    request_id, time, ..
+                } => FromBrowser::Play {
+                    id: Some(id),
+                    request_id,
+                    time,
+                },
+                FromBrowser::Pause {
+                    request_id, time, ..
+                } => FromBrowser::Pause {
+                    id: Some(id),
+                    request_id,
+                    time,
+                },
+                FromBrowser::Seek {
+                    request_id, time, ..
+                } => FromBrowser::Seek {
+                    id: Some(id),
+                    request_id,
+                    time,
+                },
+                FromBrowser::Status {
+                    position,
+                    buffered,
+                    state,
+                    ..
+                } => FromBrowser::Status {
+                    id: Some(id),
+                    position,
+                    buffered,
+                    state,
+                },
+                _ => msg,
+            };
+            Ok(msg)
+        }
         _ => anyhow::bail!("invalid message type"),
     }
 }

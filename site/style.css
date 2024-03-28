@@ -14,8 +14,29 @@ html, body {
 }
 
 .video-page {
+	background-color: #000;
 	width: 100%;
 	height: 100%;
+}
+
+.video-page video {
+	width: 100%;
+	height: 100%;
+}
+
+.information-overlay {
+	background-color: #333333aa;
+	color: #aaa;
+	position: absolute;
+	top: 0.5em;
+	right: 0.5em;
+	padding: 0.5em;
+	opacity: 0.0;
+	transition: 0.5s;
+	pointer-events:none;
+}
+.video-page:hover + .information-overlay {
+	opacity: 1.0;
 }
 
 .join-form {

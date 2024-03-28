@@ -11,16 +11,30 @@
 </template>
 
 <template id="joinPage">
-	<div class="join-page">
+	<div class="home-page">
 		<div class="join-form">
 			<input class="form-element" id="name" placeholder="nickname" type="text" />
-			<input class="form-element" id="room" placeholder="room id" type="text" />
 			<button class="form-element" id="join" disabled>join</button>
 </template>
 
 <template id="videoPage">
 	<div class="video-page">
-		<video id="player"></video>
+		<video controls id="player"></video>
+	</div>
+	<div class="information-overlay">
+		<table id="infoTable">
+			<th>
+			<td>name
+			<td>time
+			<td>cache
+		</table>
+</template>
+
+<template id="infoRow">
+	<tr>
+	<td id="name">
+	<td id="position">
+	<td id="status">
 </template>
 
 <script src="/app.js"></script>
