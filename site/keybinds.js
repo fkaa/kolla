@@ -1,5 +1,5 @@
 // Default keybinds
-const Actions = {
+const Action = {
   VOLUME_UP: '+',
   VOLUME_DOWN: '-',
   PAUSE: 'Space',
@@ -9,14 +9,14 @@ const Actions = {
 
 /**
  * 
- * @param {keyof Actions} key Existing KeyAction
+ * @param {keyof Action} key Existing KeyAction
  * @param {string} newKeybind Keybind to replace the current one
  */
 function rebind(key, newKeybind) {
-  if (!Actions[key])
+  if (!Action[key])
     throw new TypeError('This keybind does not exist')
 
-  Actions[key] = newKeybind
+  Action[key] = newKeybind
 }
 
 // Store callbacks per key combination
@@ -85,5 +85,5 @@ document.addEventListener('keydown', keyPressHandler)
 export {
   rebind,
   on,
-  Actions
+  Action
 }

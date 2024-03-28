@@ -1,4 +1,4 @@
-import { Actions, on } from "./keybinds.js";
+import { Action, on } from "./keybinds.js";
 
 let ws = null;
 let infoTable = null;
@@ -274,7 +274,7 @@ function bufferedFromPosition(video, pos) {
 }
 
 // Register keybinds
-on(Actions.PAUSE, () => {
+on(Action.PAUSE, () => {
 	// Whatever happens when users want to pause
 })
 
