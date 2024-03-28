@@ -1,11 +1,13 @@
+import { Action, on } from "./keybinds.js";
+
 let ws = null;
 let infoTable = null;
 let player = null;
 let watching = false;
 let joining = false;
 let watchers = [];
-
 let [userplay, userpause, userseek] = [true, true, true];
+
 let onplayimpl = e => {
 	if (userplay == false) {
 		userplay = true;
@@ -30,12 +32,12 @@ let onseekimpl = e => {
 		onuserseek(e);
 	}
 };
-let onuserplay = () => {};
-let onuserpause = () => {};
-let onuserseek = () => {};
-let onplay = () => {};
-let onpause = () => {};
-let onseek = () => {};
+let onuserplay = () => { };
+let onuserpause = () => { };
+let onuserseek = () => { };
+let onplay = () => { };
+let onpause = () => { };
+let onseek = () => { };
 
 function play() {
 	if (player != null) {
@@ -46,6 +48,7 @@ function play() {
 		player.play();
 	}
 }
+
 function pause() {
 	if (player != null) {
 		if (player.paused) {
@@ -55,6 +58,7 @@ function pause() {
 		player.pause();
 	}
 }
+
 function seek(pos) {
 	if (player != null) {
 		userseek = false;
@@ -141,8 +145,8 @@ function loadJoinPage(roomName) {
 		joining = true;
 
 		ws = new WebSocket(`ws://localhost:8003/api/${roomName}/${name.value}/`);
-		ws.onerror = (e) => {console.error(e);}
-		ws.onopen = () => {console.log("hello");}
+		ws.onerror = (e) => { console.error(e); }
+		ws.onopen = () => { console.log("hello"); }
 		ws.onmessage = onWebSocketMessage;
 	}
 	join.onclick = connect;
@@ -174,15 +178,15 @@ function loadVideoPage(meta) {
 	player.onseeked = onseekimpl;
 	onuserplay = e => {
 		console.log("Sending play at :" + player.currentTime);
-		ws.send(JSON.stringify({ play: { requestId: 0, time: player.currentTime }}));
+		ws.send(JSON.stringify({ play: { requestId: 0, time: player.currentTime } }));
 	}
 	onuserpause = e => {
 		console.log("Sending pause at :" + player.currentTime);
-		ws.send(JSON.stringify({ pause: { requestId: 0, time: player.currentTime }}));
+		ws.send(JSON.stringify({ pause: { requestId: 0, time: player.currentTime } }));
 	}
 	onuserseek = e => {
 		console.log("Sending seek at :" + player.currentTime);
-		ws.send(JSON.stringify({ seek: { requestId: 0, time: player.currentTime }}));
+		ws.send(JSON.stringify({ seek: { requestId: 0, time: player.currentTime } }));
 	}
 
 	// TODO: check room state
@@ -268,5 +272,10 @@ function bufferedFromPosition(video, pos) {
 
 	return 0;
 }
+
+// Register keybinds
+on(Action.PAUSE, () => {
+	// Whatever happens when users want to pause
+})
 
 /* vi: set sw=4 ts=4: */
