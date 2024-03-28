@@ -2,6 +2,7 @@ let ws = null;
 let infoTable = null;
 let player = null;
 let watching = false;
+let joining = false;
 let watchers = [];
 
 let [userplay, userpause, userseek] = [true, true, true];
@@ -129,19 +130,28 @@ function loadHomePage() {
 }
 
 function loadJoinPage(roomName) {
-	let [html, name, join] = loadTemplate("joinPage", "name", "join");
+	let [html, name, join, joinForm] = loadTemplate("joinPage", "name", "join", "joinForm");
 
 	name.oninput = () => setEnabled(join, isValidHomePage(name));
 
-	join.onclick = () => {
+	function connect() {
+		if (joining) {
+			return;
+		}
+		joining = true;
+
 		ws = new WebSocket(`ws://localhost:8003/api/${roomName}/${name.value}/`);
 		ws.onerror = (e) => {console.error(e);}
 		ws.onopen = () => {console.log("hello");}
 		ws.onmessage = onWebSocketMessage;
-	};
+	}
+	join.onclick = connect;
+	joinForm.onsubmit = connect;
 
 	document.body.innerHTML = "";
 	document.body.appendChild(html);
+
+	name.focus();
 }
 
 function loadVideoPage(meta) {
@@ -156,6 +166,8 @@ function loadVideoPage(meta) {
 
 	document.body.innerHTML = "";
 	document.body.appendChild(html);
+
+	player.focus();
 
 	player.onplay = onplayimpl;
 	player.onpause = onpauseimpl;
