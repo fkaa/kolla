@@ -38,6 +38,9 @@ html, body {
 .video-page:hover + .information-overlay {
 	opacity: 1.0;
 }
+#cache {
+	color: #6f6f6f;
+}
 
 .join-form {
 	display: flex;

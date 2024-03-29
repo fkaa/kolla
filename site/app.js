@@ -7,7 +7,7 @@ let watchers = [];
 
 let [userplay, userpause, userseek] = [true, true, true];
 let onplayimpl = e => {
-	if (userplay == false) {
+	if (userplay === false) {
 		userplay = true;
 		onplay(e);
 	} else {
@@ -15,7 +15,7 @@ let onplayimpl = e => {
 	}
 };
 let onpauseimpl = e => {
-	if (userpause == false) {
+	if (userpause === false) {
 		userpause = true;
 		onpause(e);
 	} else {
@@ -23,7 +23,7 @@ let onpauseimpl = e => {
 	}
 };
 let onseekimpl = e => {
-	if (userseek == false) {
+	if (userseek === false) {
 		userseek = true;
 		onseek(e);
 	} else {
@@ -141,7 +141,10 @@ function loadJoinPage(roomName) {
 		joining = true;
 
 		ws = new WebSocket(`ws://localhost:8003/api/${roomName}/${name.value}/`);
-		ws.onerror = (e) => {console.error(e);}
+		ws.onerror = (e) => {
+			console.error(e);
+			joining = false;
+		}
 		ws.onopen = () => {console.log("hello");}
 		ws.onmessage = onWebSocketMessage;
 	}
@@ -202,15 +205,42 @@ function loadVideoPage(meta) {
 }
 
 function updateInfoTable(meta) {
-	infoTable.innerHTML = "";
-
 	meta.watchers.forEach(w => {
-		let [row, name, position, status] = loadTemplate("infoRow", "name", "position", "status");
-		name.innerText = w.name;
-		position.innerText = secondsToTime(w.position);
-		status.innerText = w.state == "paused" ? "⏸️" : "▶️";
-		infoTable.appendChild(row);
+		let existingWatcher = watchers.find(watcher => watcher.watcher.id === w.id);
+		if (existingWatcher != null) {
+			existingWatcher.name.innerText = w.name;
+			existingWatcher.position.innerText = secondsToTime(w.position);
+			existingWatcher.cache.innerText = secondsToTime(w.buffered);
+			existingWatcher.status.innerText = w.state === "paused" ? "⏸️" : "▶️";
+		} else {
+			let [row, name, position, cache, status] = loadTemplate("infoRow", "name", "position", "cache", "status");
+			name.innerText = w.name;
+			position.innerText = secondsToTime(w.position);
+			cache.innerText = secondsToTime(w.buffered);
+			status.innerText = w.state === "paused" ? "⏸️" : "▶️";
+			infoTable.appendChild(row);
+			row = infoTable.lastChild;
+
+			watchers.push({
+				watcher: w,
+				row,
+				name,
+				position,
+				cache,
+				status,
+			})
+		}
 	});
+
+	for (let i = 0; i < watchers.length; i++){
+		const w = watchers[i];
+
+		if (!meta.watchers.find(watcher => watcher.id === w.watcher.id)) {
+			w.row.parentElement.removeChild(w.row);
+			watchers.splice(i);
+			i--;
+		}
+	}
 }
 
 const handleFragment = () => {
@@ -257,7 +287,7 @@ function secondsToTime(seconds) {
 function bufferedFromPosition(video, pos) {
 	let bufferedRanges = video.buffered;
 
-	for (var i = 0; i < bufferedRanges.length; i++) {
+	for (let i = 0; i < bufferedRanges.length; i++) {
 		let start = video.buffered.start(i);
 		let end = video.buffered.end(i);
 
