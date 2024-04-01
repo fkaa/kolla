@@ -1,11 +1,11 @@
 use std::collections::HashMap;
+use std::env;
 use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Path, State, WebSocketUpgrade};
-use axum::http::{Request, Response, StatusCode, Uri};
-use axum::response::IntoResponse;
+use axum::http::StatusCode;
 use axum::routing::get;
 use axum::Router;
 use futures_util::stream::StreamExt;
@@ -41,15 +41,19 @@ async fn main() {
     env_logger::init();
     info!("Kolla kolla!");
 
+    let room_name = env::var("ROOM_NAME").unwrap();
+    let room_url = env::var("ROOM_URL").unwrap();
+    let serve_dir = env::var("SERVE_DIR").unwrap();
+
     let state = AppState::default();
-    let (room, room_receiver) = Room::new("ASDF".into(), "http://0.0.0.0:8000/wingit.mp4".into());
+    let (room, room_receiver) = Room::new(room_name, room_url);
     let room = Arc::new(room);
     state.add_room(room.clone()).await;
     tokio::spawn(async move { room_thread(room.clone(), room_receiver).await });
 
     let app = Router::new()
         .route("/api/:room/:name/", get(room_websocket_handler))
-        .nest_service("/", ServeDir::new("site"))
+        .nest_service("/", ServeDir::new(serve_dir))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8003").await.unwrap();
@@ -104,13 +108,7 @@ async fn room_websocket(
             Some(msg) = read.next() => {
                 debug!("{}/{}: from browser: {:?}", room.name, name, msg);
 
-                let msg = if let Ok(msg) = msg {
-                    msg
-                } else {
-                    // client disconnected
-                    break;
-                };
-
+                let msg = msg?;
                 let msg = parse_msg(msg, id)?;
 
                 room.send(msg).await;

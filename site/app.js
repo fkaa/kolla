@@ -173,6 +173,8 @@ function loadVideoPage(meta) {
 	player.focus();
 
 	player.onplay = onplayimpl;
+	// TODO: check room state
+	// play();
 	player.onpause = onpauseimpl;
 	player.onseeked = onseekimpl;
 	onuserplay = e => {
@@ -188,8 +190,12 @@ function loadVideoPage(meta) {
 		ws.send(JSON.stringify({ seek: { requestId: 0, time: player.currentTime }}));
 	}
 
-	// TODO: check room state
-	// play();
+	let watcher = meanWatcher(meta.watchers);
+
+	player.currentTime = watcher.position;
+	if (watcher.state == "playing") {
+		play();
+	}
 
 	setInterval(() => {
 		let status = {
@@ -282,6 +288,14 @@ function secondsToTime(seconds) {
 	}
 
 	return text + s + "s";
+}
+
+function meanWatcher(watchers) {
+	if (watchers.length > 0) {
+		return watchers[Math.floor(watchers.length / 2)];
+	}
+
+	return null;
 }
 
 function bufferedFromPosition(video, pos) {
