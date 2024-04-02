@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::RwLock;
 
+use crate::RoomConfig;
+
 const EMOJIS: Lazy<Vec<&'static emojis::Emoji>> = Lazy::new(|| emojis::iter().collect());
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,7 +44,7 @@ pub enum RoomState {
 #[serde(rename_all = "camelCase")]
 pub struct RoomInfo {
     name: String,
-    url: String,
+    config: RoomConfig,
     position: f64,
     state: RoomState,
     watchers: Vec<WatcherInfo>,
@@ -125,7 +127,7 @@ impl Watcher {
 
 pub struct Room {
     pub name: String,
-    pub url: String,
+    pub config: RoomConfig,
     state: RoomState,
     send: Sender<FromBrowser>,
     pub watchers: RwLock<Vec<Watcher>>,
@@ -223,12 +225,12 @@ pub async fn room_thread(room: Arc<Room>, mut recv: Receiver<FromBrowser>) {
 }
 
 impl Room {
-    pub fn new(name: String, url: String) -> (Self, Receiver<FromBrowser>) {
+    pub fn new(name: String, config: RoomConfig) -> (Self, Receiver<FromBrowser>) {
         let (send, recv) = channel(64);
 
         let room = Room {
             name,
-            url,
+            config,
             state: RoomState::Paused,
             send,
             watchers: RwLock::new(Vec::new()),
@@ -287,7 +289,7 @@ impl Room {
 
         RoomInfo {
             name: self.name.clone(),
-            url: self.url.clone(),
+            config: self.config.clone(),
             position: 0.0,
             state: self.state,
             watchers,

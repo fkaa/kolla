@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::env;
+use std::fs;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -10,7 +11,9 @@ use axum::routing::get;
 use axum::Router;
 use futures_util::stream::StreamExt;
 use futures_util::SinkExt;
+use glob::glob;
 use log::{debug, info, warn};
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
@@ -19,14 +22,39 @@ use crate::room::{room_thread, FromBrowser, Room, ToBrowser};
 
 mod room;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoomConfig {
+    pub url: String,
+    #[serde(default)]
+    pub subs: Vec<Subtitle>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Subtitle {
+    pub lang: String,
+    pub url: String,
+}
+
 #[derive(Clone, Default)]
 struct AppState {
+    room_definitions: Arc<RwLock<HashMap<String, RoomConfig>>>,
     rooms: Arc<RwLock<HashMap<String, Arc<Room>>>>,
 }
 
 impl AppState {
     async fn find_room(&self, name: &str) -> Option<Arc<Room>> {
-        self.rooms.read().await.get(name).cloned()
+        let definitions = self.room_definitions.read().await;
+        let mut rooms = self.rooms.write().await;
+
+        if !rooms.contains_key(name) {
+            let definition = definitions.get(name)?;
+            let (room, room_receiver) = Room::new(name.to_string(), definition.clone());
+            let room = Arc::new(room);
+            rooms.insert(name.to_string(), room.clone());
+            tokio::spawn(async move { room_thread(room, room_receiver).await });
+        }
+
+        rooms.get(name).cloned()
     }
 
     async fn add_room(&self, room: Arc<Room>) {
@@ -41,15 +69,14 @@ async fn main() {
     env_logger::init();
     info!("Kolla kolla!");
 
-    let room_name = env::var("ROOM_NAME").unwrap();
-    let room_url = env::var("ROOM_URL").unwrap();
     let serve_dir = env::var("SERVE_DIR").unwrap();
+    let room_dir = env::var("ROOM_DIR").unwrap();
 
     let state = AppState::default();
-    let (room, room_receiver) = Room::new(room_name, room_url);
-    let room = Arc::new(room);
-    state.add_room(room.clone()).await;
-    tokio::spawn(async move { room_thread(room.clone(), room_receiver).await });
+
+    parse_room_configs(&state, &room_dir).await;
+
+    /**/
 
     let app = Router::new()
         .route("/api/:room/:name/", get(room_websocket_handler))
@@ -167,5 +194,30 @@ fn parse_msg(msg: Message, id: u32) -> anyhow::Result<FromBrowser> {
             Ok(msg)
         }
         _ => anyhow::bail!("invalid message type"),
+    }
+}
+
+async fn parse_room_configs(state: &AppState, glob_str: &str) {
+    let mut configs = state.room_definitions.write().await;
+
+    configs.clear();
+
+    info!("Loading room configs from {glob_str:?}");
+
+    for entry in glob(glob_str).unwrap() {
+        let entry = entry.unwrap();
+
+        let filename = entry
+            .file_stem()
+            .unwrap()
+            .to_os_string()
+            .into_string()
+            .unwrap();
+        let contents = fs::read_to_string(&entry).unwrap();
+        let config: RoomConfig = toml::from_str(&contents).unwrap();
+
+        info!("> {filename:?}: {config:?}");
+
+        configs.insert(filename, config);
     }
 }

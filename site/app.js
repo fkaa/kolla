@@ -4,6 +4,10 @@ let player = null;
 let watching = false;
 let joining = false;
 let watchers = [];
+let wsProtocol = 'ws://';
+if (window.location.protocol === 'https:') {
+    wsProtocol = 'wss://';
+}
 
 let [userplay, userpause, userseek] = [true, true, true];
 let onplayimpl = e => {
@@ -140,7 +144,7 @@ function loadJoinPage(roomName) {
 		}
 		joining = true;
 
-		ws = new WebSocket(`ws://localhost:8003/api/${roomName}/${name.value}/`);
+		ws = new WebSocket(`${wsProtocol}${window.location.host}/api/${roomName}/${name.value}/`);
 		ws.onerror = (e) => {
 			console.error(e);
 			joining = false;
@@ -158,14 +162,26 @@ function loadJoinPage(roomName) {
 }
 
 function loadVideoPage(meta) {
-	console.log(`Loading video '${meta.url}'`)
+	console.log(`Loading video '${meta.config.url}'`)
 
 	let [html, table, video] = loadTemplate("videoPage", "infoTable", "player");
 
 	infoTable = table;
 	player = video;
-	player.src = meta.url;
-	player.volume = 0;
+	player.src = meta.config.url;
+	
+	if (meta.config.subs != null) {
+		meta.config.subs.forEach(s => {
+			console.log(`Loading subtitle '${s.url}'`)
+			const track = document.createElement("track");
+			track.src = s.url;
+			track.kind = "subtitles";
+			track.label = s.lang;
+			track.srclang = s.lang;
+
+			player.append(track);
+		});
+	}
 
 	document.body.innerHTML = "";
 	document.body.appendChild(html);
